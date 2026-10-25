@@ -1,0 +1,14 @@
+# Test data, not source -- regenerate on the day, don't version it.
+bags/
+reports/
+
+# Stale ad hoc build output superseded by image/ (no src/ of its own).
+teleop_ws/
+
+# Build/cache artifacts anywhere under here.
+**/build/
+**/install/
+**/log/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
