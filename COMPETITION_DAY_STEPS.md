@@ -34,8 +34,11 @@ ros2 topic info /cmd_vel -v
 
 ## 2. Clone and build
 
+Repo is private — clone with the fine-grained PAT (Contents: read-only, scoped to
+this repo only). Paste the real token in place of `<PAT>` when you actually run this;
+never save the token itself into this file or anywhere in the repo.
 ```bash
-git clone https://github.com/iuenao/sar2026_lumenfleet.git ~/sar2026_lumenfleet
+git clone https://<PAT>@github.com/iuenao/sar2026_lumenfleet.git ~/sar2026_lumenfleet
 cd ~/sar2026_lumenfleet/image
 docker build -t lumen-jazzy:initial .
 ```
