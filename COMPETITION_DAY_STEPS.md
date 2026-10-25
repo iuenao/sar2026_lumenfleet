@@ -51,23 +51,35 @@ docker run --rm -it --network host -e SAR_ROBOT_IFACE -e ROS_DOMAIN_ID=0 lumen-j
 
 ## 3. Sensor checks (read-only, safe to run first)
 
-Lidar stale-timestamp check:
+Quick check with `lidar_test.launch.py`/`imu_test.launch.py` is enough to see if
+something's obviously wrong (`status: "Stale measurement timestamp"`). For a
+properly characterized answer, use `timestamp_check` on the *raw* topic first:
 ```bash
-ros2 launch lumen_sensor_tests lidar_test.launch.py \
-  cloud_topic:=/utlidar/cloud_base base_frame:=base_link
+ros2 run lumen_sensor_tests timestamp_check \
+  --cloud-topic /utlidar/cloud_base --duration 30 --output-dir ./reports
 ```
-If `status` reads `"Stale measurement timestamp"` (seen on the local Go2 — large
-`measurement_age_sec` despite tiny `arrival_age_sec`), retime it:
-```bash
-ros2 run lumen_sensor_tests receive_time_adapter --ros-args \
-  -p enabled:=true -p cloud_input:=/utlidar/cloud_base -p cloud_output:=/lumen/retimed/cloud_base
-```
-then re-point the diagnostic at `/lumen/retimed/cloud_base` and confirm `fresh: true`.
+Read the `assessment` field:
+- `TIMING_PLAUSIBLE` → this robot's clock is fine. Use `/utlidar/cloud_base` directly,
+  **do not run the adapter** — nothing to fix.
+- Anything else (`PERSISTENT_OFFSET`, `OFFSET_VARIABLE`, `OFFSET_CHANGING`,
+  `SOURCE_TIMESTAMP_ANOMALY`) → there's a real issue, retime it:
+  ```bash
+  ros2 run lumen_sensor_tests receive_time_adapter --ros-args \
+    -p enabled:=true -p cloud_input:=/utlidar/cloud_base -p cloud_output:=/lumen/retimed/cloud_base
+  ```
+  then re-point the diagnostic at `/lumen/retimed/cloud_base` and confirm `fresh: true`.
 
-Same pattern for IMU (`imu_test.launch.py`, `imu_topic:=/utlidar/imu`, add
-`-p imu_input:=/utlidar/imu -p imu_output:=/lumen/retimed/imu` to the same adapter run
-if it's also stale — don't assume it is; it was independently stale on the local robot,
-but confirm here).
+**The fix needs no measured value plugged in** — `receive_time_adapter` just
+overwrites the stamp with arrival time unconditionally; it's the same operation
+whether the original offset was 2 seconds or 2500 seconds. You only need to know
+*whether* there's an issue (the `assessment` field), never *how big* it is, to decide
+whether to enable the adapter.
+
+Same pattern for IMU (`imu_test.launch.py`/`timestamp_check --imu-topic /utlidar/imu`,
+add `-p imu_input:=/utlidar/imu -p imu_output:=/lumen/retimed/imu` to the same
+adapter run if it's also flagged — don't assume it is just because the lidar was;
+it was independently stale on the local robot, but confirm each sensor separately
+here).
 
 Don't assume the real robot has this bug at all — some robots won't. Check first,
 retime only if the check shows it.
