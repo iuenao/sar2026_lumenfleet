@@ -1,4 +1,13 @@
-# Mapping — test plan
+# Mapping — test plan (superseded 2026-10-28)
+
+**Superseded.** `slam_toolbox` + Nav2 + `explore_lite`/`hybrid_explorer.py` are now
+baked into the Docker image and validated on the local Humble robot — see
+`COMPETITION_DAY_STEPS.md` §7-12 for the current plan. The RTAB-Map stretch-goal
+and `go2_ros2_sdk` evaluation below were superseded by that work and were never
+carried out as written here; kept only as historical record of the reasoning at
+the time.
+
+---
 
 Real mapping validation is scheduled for **Thursday's dedicated slot**, not
 tomorrow's. This doc exists so that decision and the reasoning behind it isn't lost

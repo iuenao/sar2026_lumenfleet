@@ -32,6 +32,32 @@ ros2 topic info /cmd_vel -v
   both — two different controllers fighting for authority on the same robot is unsafe,
   not just redundant.
 
+**Same check, one level lower, for `go2_driver` itself (new as of today's mapping/
+nav additions).** `go2_driver` is what bridges the robot's native DDS into
+`/utlidar/*` topics and the `/api/sport/request` command channel — if `/opt/sar/src/
+unitree_ros2` (or anything else already on this Jetson) already runs an equivalent
+driver, running our own on top risks either: (a) wasted/redundant sensor publishing
+(harmless but pointless), or (b) a second path capable of commanding the robot
+existing alongside whatever authority the organizer's stack already has (the
+actual unsafe case — same "two controllers" problem as `/cmd_vel`, just lower in
+the stack), or (c) a DDS participant/network-interface binding conflict with
+whatever's already attached to the robot's onboard computer (untested, unknown
+which way it fails).
+```bash
+ros2 node list | grep -i "driver\|go2\|unitree"
+ros2 topic list | grep -i utlidar
+ls /opt/sar/src/ 2>/dev/null
+```
+- Nothing running, no `/utlidar/*` topics yet → safe to launch our own `go2_driver`
+  (via `go2_online.launch.py` / `go2_mapping_slam_toolbox.launch.py`) — that's the
+  normal path to get from nothing to sensor data.
+- `/utlidar/*` topics already present and populated → **do not launch our own
+  `go2_driver`.** Point our mapping/nav stack at the already-published topics
+  instead (our nodes don't care who published them) and skip the driver entirely.
+  If unsure whether it's safe to also command the robot through our bridge on top
+  of whatever's already running, ask before trying — this is exactly the kind of
+  call that's cheap to get wrong on a physical robot.
+
 ## 2. Clone and build
 
 Repo is private — clone with the fine-grained PAT (Contents: read-only, scoped to
@@ -135,3 +161,133 @@ the physical controller ready before any of these, every time.
   correctly-sourced shell before concluding anything's actually broken.
 - `eth1` (or `$SAR_ROBOT_IFACE`) showing `DOWN` just means the robot isn't physically
   connected/powered — not a config bug.
+- **QoS mismatches fail silently.** Nav2's costmap topics (`/local_costmap/costmap`,
+  `/global_costmap/costmap`) and `/map` publish as `RELIABLE` + `TRANSIENT_LOCAL`. A
+  subscriber with the wrong QoS (including rclpy's plain default) connects at the
+  discovery level but receives *zero messages*, with no error on either side — looks
+  identical to "nothing is happening." If a new node/tool shows nothing on a Nav2 topic:
+  check `ros2 topic info <topic> -v` for the actual profile and match it explicitly
+  (`rclpy.qos.QoSProfile(reliability=RELIABLE, durability=TRANSIENT_LOCAL, depth=1)`).
+  `hybrid_explorer.py` already does this; a brand new script may not.
+- Similarly, `/utlidar/scan` triggered `pointcloud_to_laserscan_node`'s own
+  "requesting incompatible QoS. No messages will be sent to it" warning for at least
+  one Nav2 subscriber on the local robot. **Explicitly verify `collision_monitor` is
+  actually receiving scan data** before trusting its StopZone/SlowZone as a safety
+  net on the competition robot — don't assume it's fine just because it started
+  without errors.
+
+## 7. Rebuild the image — mapping/Nav2/exploration now included
+
+As of 2026-10-28 the image also bundles `slam_toolbox`, full Nav2, `explore_lite`,
+and this team's own `go2_bringup` (driver/camera/description + mapping/nav launch
+files + `hybrid_explorer.py`). **None of this has been tested in the Jazzy/Docker
+environment yet** — it is only validated on the local Humble robot
+(`cyclonedds_ws`). Treat tomorrow as the first real test of this stack, not a
+known-working rerun.
+```bash
+cd ~/sar2026_lumenfleet/image
+docker build -t lumen-jazzy:nav .
+docker run --rm -it --network host -e SAR_ROBOT_IFACE -e ROS_DOMAIN_ID=0 lumen-jazzy:nav bash
+```
+If you want RViz visible via the robot's TurboVNC desktop, add X11 passthrough to
+the `docker run` (rviz2 is included in the image):
+```bash
+docker run --rm -it --network host -e SAR_ROBOT_IFACE -e ROS_DOMAIN_ID=0 \
+  -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  lumen-jazzy:nav bash
+```
+Without that, use `use_rviz:=false` on the nav launch below and skip visualization,
+or run a second container the same way just for `rviz2`.
+
+## 8. Keyboard control (direct sport API, bypasses cmd_vel entirely)
+
+```bash
+python3 /validation/keyboard_control.py --live
+```
+Refuses to start if `go2_cmd_vel_bridge` is already running (checked in-code) — that's
+intentional, not a bug; two command sources is unsafe. Keys: WASD move, Q/E rotate in
+place, U stand up, Y stand down, R recovery stand. Operator with the physical
+controller ready before starting, same as every other motion test.
+
+## 9. Reactive navigation (longer run, fine-tune thresholds on this robot)
+
+Same script as step 5, run it longer / with an actual obstacle course this time to
+check whether the locally-validated thresholds (`--speed 0.4`, `--stop-range 0.6`,
+`--rotate-safety-range 0.3`) still hold on this robot's lidar mount and chassis:
+```bash
+ros2 run go2_cmd_vel_bridge go2_cmd_vel_bridge --ros-args \
+  -p cmd_vel_topic:=/lumen/teleop/cmd_vel -p request_topic:=/api/sport/request \
+  -p max_vx:=0.4 -p max_vy:=0.25 -p max_wz:=0.80
+python3 /validation/reactive_avoid.py --live --speed 0.4 --stop-range 0.6 \
+  --rotate-safety-range 0.3 --angle 90 --angular-speed 0.6
+```
+If it collides on stop, the first thing to check is the lidar mount offset from
+`base_link` on *this* robot (not assumed equal to the local one) — that's what drove
+the `stop-range` increase last time, not the speed.
+
+## 10. Mapping test (slam_toolbox, navigates while mapping)
+
+```bash
+ros2 launch go2_bringup go2_mapping_slam_toolbox.launch.py rviz:=false
+```
+Walk the robot around manually (teleop or reactive_avoid) while this runs; watch for:
+- `/map` actually growing (`ros2 topic echo /map --field info` or watch it in RViz if
+  you have a display) — not just TF/odom moving with an empty map.
+- No `serialization::Read: Failed to open requested file` panic — that line is
+  expected/harmless on a first run (no prior saved map), not a real error.
+- Floor/leg contamination in the scan: if the map fills with noise close to the
+  robot's own footprint, re-check `body_filter`'s `EXCLUSION_BOX` and
+  `utlidar_to_laserscan`'s `min_height` against *this* robot's lidar mount height —
+  both were tuned empirically on the local robot's geometry, not guaranteed identical.
+
+## 11. RViz-based waypoint navigation
+
+```bash
+ros2 launch go2_bringup go2_navigation_slam.launch.py use_rviz:=false
+```
+In another shell (or another container), send goals either by clicking in RViz
+(`config/nav2_rviz.rviz` if you have a display) or directly:
+```bash
+ros2 run go2_bringup waypoint_nav.py
+```
+Edit `WAYPOINTS` in that script first — the ones checked in are the local robot's
+room coordinates and mean nothing on this map. Watch `xy_goal_tolerance: 0.15` and
+`rolling_window` costmaps (both tuned against local-robot behavior) for anything
+that looks obviously wrong (robot never "arrives," costmap warnings) before assuming
+it's just slow.
+
+## 12. Frontier exploration + hybrid algorithm — this is the fine-tuning target
+
+Two options, don't run both at once (same single-command-source rule as everywhere
+else in this doc):
+
+**A. `explore_lite`** (frontier-based) — known issue on the local robot: gets stuck
+re-sending an already-reached goal near walls/corners (confirmed in its own source,
+not fixed, not worth chasing further). Still worth trying here in case this robot's
+geometry/environment avoids the specific corner case:
+```bash
+ros2 run explore_lite explore --ros-args --params-file \
+  $(ros2 pkg prefix explore_lite)/share/explore_lite/config/params.yaml
+```
+
+**B. `hybrid_explorer.py`** (this team's own node, replaces explore_lite) — reactive
+drive by default, consults the local costmap to detect "something close ahead" and
+the cumulative `/map` to pick the turn direction with the most unexplored space.
+Never publishes `cmd_vel` directly, only sends `navigate_to_pose` goals, so it's safe
+to leave `collision_monitor` running underneath:
+```bash
+ros2 run go2_bringup hybrid_explorer.py
+```
+Known limitation, not yet fixed: if every sampled heading (every 30° across ±90°) is
+blocked at once, it logs `Obstacle ahead but no clear candidate heading -- waiting`
+and just sits there — no back-up behavior. If you hit this tomorrow, that's the next
+thing to add, not a sign something else is broken.
+
+Tuning knobs (all ROS params, no code changes needed), if default behavior isn't
+good for this environment:
+```bash
+ros2 run go2_bringup hybrid_explorer.py --ros-args \
+  -p forward_step:=1.0 -p avoid_step:=1.0 \
+  -p obstacle_check_ahead:=0.70 -p obstacle_check_width:=0.45 \
+  -p obstacle_cost_threshold:=50 -p unknown_check_radius:=2.0
+```
