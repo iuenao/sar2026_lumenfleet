@@ -13,6 +13,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     rviz = LaunchConfiguration('rviz')
+    driver = LaunchConfiguration('driver')
     camera = LaunchConfiguration('camera')
     camera_interface = LaunchConfiguration('camera_interface')
     camera_tf = LaunchConfiguration('camera_tf')
@@ -27,6 +28,12 @@ def generate_launch_description():
         'rviz',
         default_value='True',
         description='Launch RViz'
+    )
+    declare_driver_cmd = DeclareLaunchArgument(
+        'driver',
+        default_value='True',
+        description='Launch go2_driver. Set false when /utlidar/* is already published '
+                    'by the robot, so only one stack can command it'
     )
     declare_camera_cmd = DeclareLaunchArgument(
         'camera',
@@ -96,7 +103,8 @@ def generate_launch_description():
                 'launch',
                 'go2_driver.launch.py'
             )
-        )
+        ),
+        condition=IfCondition(driver)
     )
 
     retime_cmd = Node(
@@ -152,6 +160,7 @@ def generate_launch_description():
 
     ld = LaunchDescription()
     ld.add_action(declare_rviz_cmd)
+    ld.add_action(declare_driver_cmd)
     ld.add_action(declare_camera_cmd)
     ld.add_action(declare_camera_interface_cmd)
     ld.add_action(declare_camera_tf_cmd)
