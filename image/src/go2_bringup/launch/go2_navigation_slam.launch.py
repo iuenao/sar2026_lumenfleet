@@ -23,6 +23,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -30,6 +31,7 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory('go2_bringup')
     nav2_params_file = LaunchConfiguration('params_file')
     use_rviz = LaunchConfiguration('use_rviz')
+    enable_motion = LaunchConfiguration('enable_motion')
 
     # ── Mapping + sensor bringup ─────────────────────────────────────────────
     # Launches: go2_online (driver + retime_utlidar + robot_state_publisher),
@@ -143,12 +145,15 @@ def generate_launch_description():
         name='go2_cmd_vel_bridge',
         output='screen',
         parameters=[{
+            # The bridge is disabled unless enable_motion:=true, and its own
+            # defaults point at test topics, so wire it explicitly here.
+            'enabled': ParameterValue(enable_motion, value_type=bool),
+            'cmd_vel_topic': '/cmd_vel',
+            'request_topic': '/api/sport/request',
             'max_vx': 0.40,
             'max_vy': 0.25,
             'max_wz': 0.80,
             'cmd_timeout_s': 0.25,
-            'deadband_linear': 0.06,
-            'deadband_angular': 0.08,
         }]
     )
 
@@ -157,6 +162,11 @@ def generate_launch_description():
             'params_file',
             default_value=os.path.join(bringup_dir, 'config', 'nav2_params_slam.yaml'),
             description='Full path to Nav2 parameters file'
+        ),
+        DeclareLaunchArgument(
+            'enable_motion',
+            default_value='false',
+            description='Let the bridge command the robot. false = Nav2 plans but nothing moves'
         ),
         DeclareLaunchArgument(
             'use_rviz',
