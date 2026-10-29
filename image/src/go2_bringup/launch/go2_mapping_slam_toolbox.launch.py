@@ -4,10 +4,16 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument, EmitEvent, ExecuteProcess, IncludeLaunchDescription,
+    LogInfo, RegisterEventHandler)
+from launch.events import matches_action
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
+from launch_ros.event_handlers import OnStateTransition
+from launch_ros.events.lifecycle import ChangeState
+from lifecycle_msgs.msg import Transition
 
 
 def generate_launch_description():
@@ -78,13 +84,32 @@ def generate_launch_description():
     )
 
     # ── slam_toolbox async mapping ───────────────────────────────────────────
-    slam_toolbox = Node(
+    # In Jazzy slam_toolbox is a lifecycle node: started as a plain Node it stays
+    # unconfigured, publishes no /map or map->odom, and Nav2's global costmap then
+    # waits forever for the map frame. Configure and activate it from here.
+    slam_toolbox = LifecycleNode(
         package='slam_toolbox',
         executable='async_slam_toolbox_node',
         name='slam_toolbox',
+        namespace='',
         output='screen',
         parameters=[os.path.join(bringup_dir, 'config', 'slam_toolbox_params.yaml')]
     )
+
+    slam_configure = EmitEvent(event=ChangeState(
+        lifecycle_node_matcher=matches_action(slam_toolbox),
+        transition_id=Transition.TRANSITION_CONFIGURE))
+
+    slam_activate = RegisterEventHandler(OnStateTransition(
+        target_lifecycle_node=slam_toolbox,
+        start_state='configuring',
+        goal_state='inactive',
+        entities=[
+            LogInfo(msg='slam_toolbox configured: activating'),
+            EmitEvent(event=ChangeState(
+                lifecycle_node_matcher=matches_action(slam_toolbox),
+                transition_id=Transition.TRANSITION_ACTIVATE)),
+        ]))
 
     # ── Map saver server (call ros2 service to save) ─────────────────────────
     map_saver_server = Node(
@@ -107,5 +132,7 @@ def generate_launch_description():
         body_filter,
         utlidar_to_laserscan,
         slam_toolbox,
+        slam_activate,
+        slam_configure,
         map_saver_server,
     ])

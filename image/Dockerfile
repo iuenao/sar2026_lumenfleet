@@ -39,6 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-pointcloud-to-laserscan \
     ros-jazzy-navigation2 \
     ros-jazzy-rviz2 \
+    ros-jazzy-rtabmap-slam \
+    ros-jazzy-rtabmap-viz \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/lumen_ws
