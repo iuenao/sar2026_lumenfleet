@@ -60,13 +60,45 @@ ls /opt/sar/src/ 2>/dev/null
 
 ## 2. Clone and build
 
-Repo is private — clone with the fine-grained PAT (Contents: read-only, scoped to
-this repo only). Paste the real token in place of `<PAT>` when you actually run this;
-never save the token itself into this file or anywhere in the repo.
+**If this is the first time on this machine**, repo is private — clone with the
+fine-grained PAT (Contents: read-only, scoped to this repo only). Paste the real
+token in place of `<PAT>` when you actually run this; never save the token itself
+into this file or anywhere in the repo.
 ```bash
 git clone https://<PAT>@github.com/iuenao/sar2026_lumenfleet.git ~/sar2026_lumenfleet
 cd ~/sar2026_lumenfleet/image
 docker build -t lumen-jazzy:initial .
+```
+
+**If a clone from an earlier slot already exists on this machine** (2026-10-28:
+likely — robot `seek` had a prior session), don't just `git checkout` the new
+branch blind. Check first, from inside that existing clone:
+```bash
+cd ~/sar2026_lumenfleet   # wherever it was cloned last time
+git status
+git stash list
+git log --oneline -5
+```
+- Clean, matches `origin/main` → safe to switch in place:
+  ```bash
+  git fetch origin
+  git checkout mapping-nav-explore-hybrid
+  ```
+- Anything uncommitted or local commits not on a remote branch → that's in-field
+  work from the prior session, don't risk losing it. Either push it somewhere
+  first, or just leave that directory alone and clone fresh elsewhere instead:
+  ```bash
+  git clone https://<PAT>@github.com/iuenao/sar2026_lumenfleet.git ~/sar2026_lumenfleet_nav
+  cd ~/sar2026_lumenfleet_nav && git checkout mapping-nav-explore-hybrid
+  ```
+
+Either way, rebuild with a **new, distinct image tag** rather than overwriting
+`lumen-jazzy:initial` — switching branches/clones never rebuilds the image for
+you, and keeping the old tag around means instant fallback if today's new
+mapping/Nav2/exploration stack misbehaves mid-slot:
+```bash
+cd image   # inside whichever clone directory you ended up using above
+docker build -t lumen-jazzy:nav .
 ```
 No `sudo` on the robot — this is your own rootless Docker. Use `sar-run` (TEAM_GUIDE
 §3.3) rather than raw `docker run` where possible; it wires up network/GPU/camera for

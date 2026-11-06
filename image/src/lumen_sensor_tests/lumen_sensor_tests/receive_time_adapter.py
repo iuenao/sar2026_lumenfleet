@@ -1,6 +1,5 @@
 """Explicit arrival-time workaround, preserving raw topics and all other fields."""
 
-import copy
 import json
 import math
 import time
@@ -11,14 +10,26 @@ from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from sensor_msgs.msg import Imu, PointCloud2
+from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from std_msgs.msg import Header
 
 from .common import run
 
 
 def restamp(message, stamp):
-    result = copy.deepcopy(message)
-    result.header.stamp = copy.deepcopy(stamp)
+    """Republish with a new header.stamp without deep-copying the payload.
+    copy.deepcopy() on an Image/PointCloud2 recursively walks its whole
+    object graph, including the raw .data bytes -- expensive enough at
+    sensor rate to measurably contend with everything else on the CPU. We
+    only ever change the stamp, so every other field (including .data,
+    which is immutable anyway) is safe to share by reference; only .header
+    needs to be a genuinely new object so mutating its .stamp doesn't touch
+    the original.
+    """
+    result = type(message)()
+    for field in message.get_fields_and_field_types():
+        setattr(result, field, getattr(message, field))
+    result.header = Header(frame_id=message.header.frame_id, stamp=stamp)
     return result
 
 
@@ -41,7 +52,8 @@ class ReceiveTimeAdapter(Node):
         output_qos = QoSProfile(depth=1, durability=DurabilityPolicy.VOLATILE,
                                 reliability=ReliabilityPolicy.RELIABLE)
         pairs = []
-        for kind, typ in [('cloud', PointCloud2), ('imu', Imu), ('odom', Odometry)]:
+        for kind, typ in [('cloud', PointCloud2), ('imu', Imu), ('odom', Odometry),
+                          ('rgb', Image), ('depth', Image), ('rgb_info', CameraInfo)]:
             source = self.param(kind + '_input', '')
             target = self.param(kind + '_output', '/lumen/retimed/' + kind)
             if source:

@@ -1,14 +1,29 @@
 #!/usr/bin/env python3
 
-import copy
-
 import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import PointCloud2
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
+from std_msgs.msg import Header
 from tf2_ros import TransformBroadcaster
+
+
+def restamp(message, stamp):
+    """Republish with a new header.stamp without deep-copying the payload.
+    copy.deepcopy() on a PointCloud2 recursively walks its whole object graph,
+    including the raw .data bytes -- expensive enough at lidar scan rate to
+    measurably contend with everything else on the CPU. We only ever change
+    the stamp, so every other field (including .data, which is immutable
+    anyway) is safe to share by reference; only .header needs to be a
+    genuinely new object so mutating its .stamp doesn't touch the original.
+    """
+    result = type(message)()
+    for field in message.get_fields_and_field_types():
+        setattr(result, field, getattr(message, field))
+    result.header = Header(frame_id=message.header.frame_id, stamp=stamp)
+    return result
 
 
 class RetimeUtlidar(Node):
@@ -58,19 +73,16 @@ class RetimeUtlidar(Node):
         self.get_logger().info('retime_utlidar node started')
 
     def cloud_callback(self, msg: PointCloud2):
-        out = copy.deepcopy(msg)
-        out.header.stamp = self.get_clock().now().to_msg()
+        out = restamp(msg, self.get_clock().now().to_msg())
         self.cloud_pub.publish(out)
 
     def cloud_base_callback(self, msg: PointCloud2):
-        out = copy.deepcopy(msg)
-        out.header.stamp = self.get_clock().now().to_msg()
+        out = restamp(msg, self.get_clock().now().to_msg())
         self.cloud_base_pub.publish(out)
 
     def odom_callback(self, msg: Odometry):
-        out = copy.deepcopy(msg)
         now = self.get_clock().now().to_msg()
-        out.header.stamp = now
+        out = restamp(msg, now)
         self.odom_pub.publish(out)
 
         tf_msg = TransformStamped()
